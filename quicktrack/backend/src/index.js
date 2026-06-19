@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const { scrapeBlinkit } = require('./scrapers/blinkit');
 const { scrapeZepto } = require('./scrapers/zepto');
 const { scrapeInstamart } = require('./scrapers/instamart');
+const { startScheduler, loadSlots, saveSlots } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -24,18 +25,23 @@ if (process.env.NODE_ENV === 'production') {
 
 // Rate Limiting
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30, // Limit each IP to 30 requests per `window` (here, per 1 minute)
+  windowMs: 1 * 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use('/scrape', limiter);
 
-// Keep-alive endpoint for Render
+// Keep-alive endpoints
 app.get('/ping', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+
+// Manual on-demand scrape (kept for testing / "Check Now" button)
 app.post('/scrape', async (req, res) => {
   const { platform, pincode, query } = req.body;
 
@@ -58,7 +64,6 @@ app.post('/scrape', async (req, res) => {
       default:
         return res.status(400).json({ error: `Unsupported platform: ${platform}` });
     }
-
     res.json(result);
   } catch (error) {
     console.error(`Error scraping ${platform}:`, error.message);
@@ -66,6 +71,17 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
+// Slot config — frontend reads/writes here, scheduler reads from same store
+app.get('/slots', (req, res) => {
+  res.json(loadSlots());
+});
+
+app.post('/slots', (req, res) => {
+  saveSlots(req.body);
+  res.json({ ok: true });
+});
+
 app.listen(PORT, () => {
   console.log(`QuickTrack backend running on port ${PORT}`);
+  startScheduler();
 });
