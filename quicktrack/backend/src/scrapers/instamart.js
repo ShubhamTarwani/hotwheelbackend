@@ -1,12 +1,13 @@
-const { chromium } = require('playwright-extra');
-const stealth = require('puppeteer-extra-plugin-stealth')();
-chromium.use(stealth);
+const { getBrowser } = require('../browserManager');
+const { pincodeToLatLng } = require('../geo');
 
 // Global state to track consecutive failures for BETA fallback
 let consecutiveFailures = 0;
 const MAX_FAILURES = 3;
 
 async function scrapeInstamart(pincode, query) {
+  const { lat, lng } = await pincodeToLatLng(pincode);
+  
   if (consecutiveFailures >= MAX_FAILURES) {
     return {
       inStock: false,
@@ -17,15 +18,13 @@ async function scrapeInstamart(pincode, query) {
     };
   }
 
-  let browser;
+  let context;
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    const browser = await getBrowser();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      geolocation: { latitude: Number(lat), longitude: Number(lng) },
+      permissions: ['geolocation'],
     });
     
     const page = await context.newPage();
@@ -33,7 +32,7 @@ async function scrapeInstamart(pincode, query) {
     // Construct search URL
     const searchUrl = `https://www.swiggy.com/instamart/search?custom_back=true&query=${encodeURIComponent(query)}`;
     
-    await page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 15000 });
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
     
     // Basic evaluation for availability (mocked structure)
     // In reality, Akamai might block or the layout might require specific selectors
@@ -52,7 +51,8 @@ async function scrapeInstamart(pincode, query) {
       };
     });
 
-    await browser.close();
+    await page.close();
+    await context.close();
 
     if (!productData) {
       consecutiveFailures++;
@@ -76,7 +76,7 @@ async function scrapeInstamart(pincode, query) {
     };
 
   } catch (error) {
-    if (browser) await browser.close();
+    if (context) await context.close();
     consecutiveFailures++;
     console.error('Instamart scraping error:', error.message);
     throw error;
